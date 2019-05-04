@@ -637,3 +637,23 @@
 &qcom_qbt1000 {
 	status = "disabled";
 };
+
+// custom
+/ {
+	reserved-memory {
+		ramoops_mem: ramoops_region@b0000000 {
+			compatible = "removed-dma-pool";
+			no-map;
+			reg = <0 0x9FFF7000 0 0x00008000>;
+		};
+	};
+};
+
+&soc {
+	ramoops {
+		compatible = "ramoops";
+		memory-region = <&ramoops_mem>;
+		console-size = <0x0 0x200000>;
+		pmsg-size = <0x0 0x200000>;
+	};
+};
