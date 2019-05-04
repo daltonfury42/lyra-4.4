@@ -490,6 +490,12 @@
 		       reg = <0 0x9f7ff000 0 0x00001000>;
 		       label = "dfps_data_mem";
 		};
+		
+		ramoops_mem: ramoops_region {
+			compatible = "removed-dma-pool";
+			no-map;
+			reg = <0 0x9fff7000 0 0x00008000>;
+		};
 	};
 
 	bluetooth: bt_wcn3990 {
