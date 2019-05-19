@@ -89,7 +89,7 @@ static void __exit_signal(struct task_struct *tsk)
 	bool group_dead = thread_group_leader(tsk);
 	struct sighand_struct *sighand;
 	struct tty_struct *uninitialized_var(tty);
-	cputime_t utime, stime;
+	u64 utime, stime;
 
 	sighand = rcu_dereference_check(tsk->sighand,
 					lockdep_tasklist_lock_is_held());
@@ -671,11 +671,10 @@ static void check_stack_usage(void)
 static inline void check_stack_usage(void) {}
 #endif
 
-void do_exit(long code)
+void __noreturn do_exit(long code)
 {
 	struct task_struct *tsk = current;
 	int group_dead;
-	TASKS_RCU(int tasks_rcu_i);
 
 	profile_task_exit(tsk);
 	kcov_task_exit(tsk);
@@ -722,7 +721,6 @@ void do_exit(long code)
 
 	exit_signals(tsk);  /* sets PF_EXITING */
 
-	sched_exit(tsk);
 	schedtune_exit_task(tsk);
 
 	/*
@@ -789,9 +787,7 @@ void do_exit(long code)
 	 */
 	flush_ptrace_hw_breakpoint(tsk);
 
-	TASKS_RCU(preempt_disable());
-	TASKS_RCU(tasks_rcu_i = __srcu_read_lock(&tasks_rcu_exit_srcu));
-	TASKS_RCU(preempt_enable());
+	exit_tasks_rcu_start();
 	exit_notify(tsk, group_dead);
 	proc_exit_connector(tsk);
 #ifdef CONFIG_NUMA
@@ -831,31 +827,9 @@ void do_exit(long code)
 	if (tsk->nr_dirtied)
 		__this_cpu_add(dirty_throttle_leaks, tsk->nr_dirtied);
 	exit_rcu();
-	TASKS_RCU(__srcu_read_unlock(&tasks_rcu_exit_srcu, tasks_rcu_i));
+	exit_tasks_rcu_finish();
 
-	/*
-	 * The setting of TASK_RUNNING by try_to_wake_up() may be delayed
-	 * when the following two conditions become true.
-	 *   - There is race condition of mmap_sem (It is acquired by
-	 *     exit_mm()), and
-	 *   - SMI occurs before setting TASK_RUNINNG.
-	 *     (or hypervisor of virtual machine switches to other guest)
-	 *  As a result, we may become TASK_RUNNING after becoming TASK_DEAD
-	 *
-	 * To avoid it, we have to wait for releasing tsk->pi_lock which
-	 * is held by try_to_wake_up()
-	 */
-	smp_mb();
-	raw_spin_unlock_wait(&tsk->pi_lock);
-
-	/* causes final put_task_struct in finish_task_switch(). */
-	tsk->state = TASK_DEAD;
-	tsk->flags |= PF_NOFREEZE;	/* tell freezer to ignore us */
-	schedule();
-	BUG();
-	/* Avoid "noreturn function does return".  */
-	for (;;)
-		cpu_relax();	/* For when BUG is null */
+	do_task_dead();
 }
 EXPORT_SYMBOL_GPL(do_exit);
 
@@ -1052,7 +1026,7 @@ static int wait_task_zombie(struct wait_opts *wo, struct task_struct *p)
 		struct signal_struct *sig = p->signal;
 		struct signal_struct *psig = current->signal;
 		unsigned long maxrss;
-		cputime_t tgutime, tgstime;
+		u64 tgutime, tgstime;
 
 		/*
 		 * The resource counters for the group leader are in its

@@ -404,7 +404,6 @@ static noinline void __init_refok rest_init(void)
 	 * The boot idle thread must execute schedule()
 	 * at least once to get things moving:
 	 */
-	init_idle_bootup_task(current);
 	schedule_preempt_disabled();
 	/* Call into cpu_idle with preempt disabled */
 	cpu_startup_entry(CPUHP_ONLINE);
@@ -462,6 +461,7 @@ static void __init boot_cpu_init(void)
 	set_cpu_active(cpu, true);
 	set_cpu_present(cpu, true);
 	set_cpu_possible(cpu, true);
+	set_cpu_isolated(cpu, false);
 }
 
 void __init __weak smp_setup_processor_id(void)
@@ -534,6 +534,8 @@ asmlinkage __visible void __init start_kernel(void)
 	page_alloc_init();
 
 	pr_notice("Kernel command line: %s\n", boot_command_line);
+	/* parameters may set static keys */
+	jump_label_init();
 	parse_early_param();
 	after_dashes = parse_args("Booting kernel",
 				  static_command_line, __start___param,
@@ -542,8 +544,6 @@ asmlinkage __visible void __init start_kernel(void)
 	if (!IS_ERR_OR_NULL(after_dashes))
 		parse_args("Setting init args", after_dashes, NULL, 0, -1, -1,
 			   NULL, set_init_arg);
-
-	jump_label_init();
 
 	/*
 	 * These use large bootmem allocations and must precede
@@ -633,7 +633,6 @@ asmlinkage __visible void __init start_kernel(void)
 	numa_policy_init();
 	if (late_time_init)
 		late_time_init();
-	sched_clock_init();
 	calibrate_delay();
 	pidmap_init();
 	anon_vma_init();

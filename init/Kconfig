@@ -389,9 +389,11 @@ config VIRT_CPU_ACCOUNTING_GEN
 
 	  If unsure, say N.
 
+endchoice
+
 config IRQ_TIME_ACCOUNTING
 	bool "Fine granularity task level IRQ time accounting"
-	depends on HAVE_IRQ_TIME_ACCOUNTING && !NO_HZ_FULL
+	depends on HAVE_IRQ_TIME_ACCOUNTING && !VIRT_CPU_ACCOUNTING_NATIVE
 	help
 	  Select this option to enable fine granularity task irq time
 	  accounting. This is done by reading a timestamp on each
@@ -399,8 +401,6 @@ config IRQ_TIME_ACCOUNTING
 	  small performance impact.
 
 	  If in doubt, say N here.
-
-endchoice
 
 config SCHED_WALT
         bool "Support window based load tracking"
@@ -804,6 +804,19 @@ config RCU_EXPEDITE_BOOT
 	  init is exec'ed.
 
 	  Accept the default if unsure.
+
+config RCU_NOCB_CPU_BIND_LP
+	bool "Bind offloaded RCU callback threads to low-power CPUs"
+	depends on RCU_NOCB_CPU
+	help
+	  This option binds kthreads dedicated to running offloaded RCU
+	  callbacks for no-CBs CPUs (per-CPU rcuo kthreads) to the low-power CPU
+	  cluster in order to improve energy efficiency as the no-CBs mechanism
+	  was meant to do. For optimal results, all CPUs should be marked as
+	  no-CBs, especially those from the performance cluster.
+
+	  Select this if energy efficiency is critical and no-CBs
+	  high-performance CPUs are present in the system.
 
 endmenu # "RCU Subsystem"
 
@@ -1217,33 +1230,6 @@ config CGROUP_WRITEBACK
 
 endif # CGROUPS
 
-config SCHED_HMP
-	bool "Scheduler support for heterogenous multi-processor systems"
-	depends on SMP && FAIR_GROUP_SCHED
-	help
-	  This feature will let the scheduler optimize task placement on
-	  systems made of heterogeneous cpus i.e cpus that differ either
-	  in their instructions per-cycle capability or the maximum
-	  frequency they can attain.
-
-config SCHED_HMP_CSTATE_AWARE
-	bool "CPU C-state aware scheduler"
-	depends on SCHED_HMP
-	help
-	  This feature will let the HMP scheduler optimize task placement
-	  with CPUs C-state. If this is enabled, scheduler places tasks
-	  onto the shallowest C-state CPU among the most power efficient CPUs.
-
-config SCHED_CORE_CTL
-	bool "QTI Core Control"
-	depends on SMP
-	help
-	  This options enables the core control functionality in
-	  the scheduler. Core control automatically offline and
-	  online cores based on cpu load and utilization.
-
-	  If unsure, say N here.
-
 config CHECKPOINT_RESTORE
 	bool "Checkpoint/restore support" if EXPERT
 	select PROC_CHILDREN
@@ -1352,6 +1338,15 @@ config SCHED_TUNE
 
 	  Since this support exposes a single system-wide knob, the specified
 	  boost value is applied to all (CFS) tasks in the system.
+
+	  If unsure, say N.
+
+config DYNAMIC_STUNE_BOOST
+	bool "Dynamic SchedTune boosting support"
+	depends on SCHED_TUNE && CGROUP_SCHEDTUNE
+	help
+	  This option extends the SchedTune framework and provides APIs to
+	  activate and reset SchedTune boosting from anywhere in the kernel.
 
 	  If unsure, say N.
 

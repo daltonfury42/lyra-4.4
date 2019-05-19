@@ -164,6 +164,17 @@ void recalc_sigpending(void)
 
 }
 
+void calculate_sigpending(void)
+{
+	/* Have any signals or users of TIF_SIGPENDING been delayed
+	 * until after fork?
+	 */
+	spin_lock_irq(&current->sighand->siglock);
+	set_tsk_thread_flag(current, TIF_SIGPENDING);
+	recalc_sigpending();
+	spin_unlock_irq(&current->sighand->siglock);
+}
+
 /* Given the mask, find the first available signal that should be serviced. */
 
 #define SYNCHRONOUS_MASK \
@@ -594,7 +605,7 @@ int dequeue_signal(struct task_struct *tsk, sigset_t *mask, siginfo_t *info)
 			struct hrtimer *tmr = &tsk->signal->real_timer;
 
 			if (!hrtimer_is_queued(tmr) &&
-			    tsk->signal->it_real_incr.tv64 != 0) {
+			    tsk->signal->it_real_incr != 0) {
 				hrtimer_forward(tmr, tmr->base->get_time(),
 						tsk->signal->it_real_incr);
 				hrtimer_restart(tmr);
@@ -1669,9 +1680,9 @@ bool do_notify_parent(struct task_struct *tsk, int sig)
 				       task_uid(tsk));
 	rcu_read_unlock();
 
-	task_cputime(tsk, &utime, &stime);
-	info.si_utime = cputime_to_clock_t(utime + tsk->signal->utime);
-	info.si_stime = cputime_to_clock_t(stime + tsk->signal->stime);
+	task_cputime_t(tsk, &utime, &stime);
+	info.si_utime = cputime_to_clock_t(utime + nsecs_to_cputime(tsk->signal->utime));
+	info.si_stime = cputime_to_clock_t(stime + nsecs_to_cputime(tsk->signal->stime));
 
 	info.si_status = tsk->exit_code & 0x7f;
 	if (tsk->exit_code & 0x80)
@@ -1754,7 +1765,7 @@ static void do_notify_parent_cldstop(struct task_struct *tsk,
 	info.si_uid = from_kuid_munged(task_cred_xxx(parent, user_ns), task_uid(tsk));
 	rcu_read_unlock();
 
-	task_cputime(tsk, &utime, &stime);
+	task_cputime_t(tsk, &utime, &stime);
 	info.si_utime = cputime_to_clock_t(utime);
 	info.si_stime = cputime_to_clock_t(stime);
 
@@ -1855,14 +1866,27 @@ static void ptrace_stop(int exit_code, int why, int clear_code, siginfo_t *info)
 			return;
 	}
 
+	set_special_state(TASK_TRACED);
+
 	/*
 	 * We're committing to trapping.  TRACED should be visible before
 	 * TRAPPING is cleared; otherwise, the tracer might fail do_wait().
 	 * Also, transition to TRACED and updates to ->jobctl should be
 	 * atomic with respect to siglock and should be done after the arch
 	 * hook as siglock is released and regrabbed across it.
+	 *
+	 *     TRACER				    TRACEE
+	 *
+	 *     ptrace_attach()
+	 * [L]   wait_on_bit(JOBCTL_TRAPPING)	[S] set_special_state(TRACED)
+	 *     do_wait()
+	 *       set_current_state()                smp_wmb();
+	 *       ptrace_do_wait()
+	 *         wait_task_stopped()
+	 *           task_stopped_code()
+	 * [L]         task_is_traced()		[S] task_clear_jobctl_trapping();
 	 */
-	set_current_state(TASK_TRACED);
+	smp_wmb();
 
 	current->last_siginfo = info;
 	current->exit_code = exit_code;
@@ -2070,7 +2094,7 @@ static bool do_signal_stop(int signr)
 		if (task_participate_group_stop(current))
 			notify = CLD_STOPPED;
 
-		__set_current_state(TASK_STOPPED);
+		set_special_state(TASK_STOPPED);
 		spin_unlock_irq(&current->sighand->siglock);
 
 		/*

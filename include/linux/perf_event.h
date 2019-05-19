@@ -231,7 +231,7 @@ struct pmu {
 	int				capabilities;
 
 	int * __percpu			pmu_disable_count;
-	struct perf_cpu_context * __percpu pmu_cpu_context;
+	struct perf_cpu_context __percpu *pmu_cpu_context;
 	atomic_t			exclusive_cnt; /* < 0: cpu; > 0: tsk */
 	int				task_ctx_nr;
 	int				hrtimer_interval_ms;
@@ -1133,12 +1133,6 @@ static inline void perf_event_disable(struct perf_event *event)		{ }
 static inline int __perf_event_disable(void *info)			{ return -1; }
 static inline void perf_event_task_tick(void)				{ }
 static inline int perf_event_release_kernel(struct perf_event *event)	{ return 0; }
-#endif
-
-#if defined(CONFIG_PERF_EVENTS) && defined(CONFIG_NO_HZ_FULL)
-extern bool perf_event_can_stop_tick(void);
-#else
-static inline bool perf_event_can_stop_tick(void)			{ return true; }
 #endif
 
 #if defined(CONFIG_PERF_EVENTS) && defined(CONFIG_CPU_SUP_INTEL)

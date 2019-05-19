@@ -61,6 +61,7 @@
 #include <linux/static_key.h>
 #include <linux/workqueue.h>
 #include <linux/compiler.h>
+#include <linux/tick.h>
 
 /*
  * Scheduler clock - returns current time in nanosec units.
@@ -76,6 +77,11 @@ EXPORT_SYMBOL_GPL(sched_clock);
 
 __read_mostly int sched_clock_running;
 
+void sched_clock_init(void)
+{
+	sched_clock_running = 1;
+}
+
 #ifdef CONFIG_HAVE_UNSTABLE_SCHED_CLOCK
 static struct static_key __sched_clock_stable = STATIC_KEY_INIT;
 static int __sched_clock_stable_early;
@@ -89,18 +95,26 @@ static void __set_sched_clock_stable(void)
 {
 	if (!sched_clock_stable())
 		static_key_slow_inc(&__sched_clock_stable);
+
+	tick_dep_clear(TICK_DEP_BIT_CLOCK_UNSTABLE);
 }
 
 void set_sched_clock_stable(void)
 {
 	__sched_clock_stable_early = 1;
 
-	smp_mb(); /* matches sched_clock_init() */
+	smp_mb(); /* matches sched_clock_init_late() */
 
-	if (!sched_clock_running)
-		return;
-
-	__set_sched_clock_stable();
+	/*
+	 * This really should only be called early (before
+	 * sched_clock_init_late()) when guestimating our sched_clock() is
+	 * solid.
+	 *
+	 * After that we test stability and we can negate our guess using
+	 * clear_sched_clock_stable, possibly from a watchdog.
+	 */
+	if (WARN_ON_ONCE(sched_clock_running == 2))
+		__set_sched_clock_stable();
 }
 
 static void __clear_sched_clock_stable(struct work_struct *work)
@@ -108,6 +122,8 @@ static void __clear_sched_clock_stable(struct work_struct *work)
 	/* XXX worry about clock continuity */
 	if (sched_clock_stable())
 		static_key_slow_dec(&__sched_clock_stable);
+
+	tick_dep_set(TICK_DEP_BIT_CLOCK_UNSTABLE);
 }
 
 static DECLARE_WORK(sched_clock_work, __clear_sched_clock_stable);
@@ -116,12 +132,10 @@ void clear_sched_clock_stable(void)
 {
 	__sched_clock_stable_early = 0;
 
-	smp_mb(); /* matches sched_clock_init() */
+	smp_mb(); /* matches sched_clock_init_late() */
 
-	if (!sched_clock_running)
-		return;
-
-	schedule_work(&sched_clock_work);
+	if (sched_clock_running == 2)
+		schedule_work(&sched_clock_work);
 }
 
 struct sched_clock_data {
@@ -142,20 +156,9 @@ static inline struct sched_clock_data *cpu_sdc(int cpu)
 	return &per_cpu(sched_clock_data, cpu);
 }
 
-void sched_clock_init(void)
+void sched_clock_init_late(void)
 {
-	u64 ktime_now = ktime_to_ns(ktime_get());
-	int cpu;
-
-	for_each_possible_cpu(cpu) {
-		struct sched_clock_data *scd = cpu_sdc(cpu);
-
-		scd->tick_raw = 0;
-		scd->tick_gtod = ktime_now;
-		scd->clock = ktime_now;
-	}
-
-	sched_clock_running = 1;
+	sched_clock_running = 2;
 
 	/*
 	 * Ensure that it is impossible to not do a static_key update.
@@ -392,11 +395,6 @@ u64 local_clock(void)
 }
 
 #else /* CONFIG_HAVE_UNSTABLE_SCHED_CLOCK */
-
-void sched_clock_init(void)
-{
-	sched_clock_running = 1;
-}
 
 u64 sched_clock_cpu(int cpu)
 {
